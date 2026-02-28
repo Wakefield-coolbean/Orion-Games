@@ -419,7 +419,10 @@ function makeCardEl(zone){
   const img = document.createElement('img');
   img.alt = zone.name;
   // lazy-load: store in dataset until first visible
-  img.dataset.src = zone.cover.replace('{COVER_URL}',coverURL).replace('{HTML_URL}',htmlURL);
+  const rawCover = zone.cover || '';
+  img.dataset.src = rawCover.startsWith('http') ? rawCover
+    : rawCover ? rawCover.replace('{COVER_URL}',coverURL).replace('{HTML_URL}',htmlURL) : '';
+  if(!img.dataset.src) img.style.background='#06091e'; // dark placeholder for no-cover games
   inner.appendChild(img);
   const lbl = document.createElement('div');
   lbl.className = 'gcard-label';
@@ -639,28 +642,12 @@ let zonesURL=zonesurls[Math.random()*zonesurls.length|0];
 
 /* ═══════════════════════════════════════════════════
    ╔═══════════════════════════════════════════════╗
-   ║           ADD YOUR OWN GAMES HERE             ║
-   ║                                               ║
-   ║  Each entry is an object with these fields:   ║
-   ║                                               ║
-   ║  name     (required) Display name             ║
-   ║  url      (required) Full URL to the HTML     ║
-   ║             game file. Can be any direct URL  ║
-   ║             or a GitHub raw/jsDelivr link.    ║
-   ║  cover    (optional) URL to cover image.      ║
-   ║             Leave as "" for blank cover.      ║
-   ║  author   (optional) Your name / handle.      ║
-   ║  authorLink (optional) Link to your page.     ║
-   ║  special  (optional) Array of tag strings,    ║
-   ║             e.g. ["action","multiplayer"]     ║
-   ║  featured (optional) Set true to pin to top.  ║
-   ║                                               ║
    ║  EXAMPLE:                                     ║
    ║  {                                            ║
    ║    name: "My Cool Game",                      ║
    ║    url:  "https://example.com/game.html",     ║
    ║    cover: "https://example.com/thumb.png",    ║
-   ║    author: "Hunter",                          ║
+   ║    author: "JOE",                          ║
    ║    special: ["action", "arcade"],             ║
    ║    featured: false                            ║
    ║  }                                            ║
@@ -669,15 +656,15 @@ let zonesURL=zonesurls[Math.random()*zonesurls.length|0];
 const CUSTOM_GAMES = [
   // ── Paste your games below this line ──────────
 
-  // {
-  //   name: "My Cool Game",
-  //   url:  "https://example.com/game.html",
-  //   cover: "https://example.com/thumb.png",
-  //   author: "Hunter",
-  //   authorLink: "https://example.com",
-  //   special: ["action"],
-  //   featured: false
-  // },
+   {
+     name: "My Cool Game",
+     url:  "https://example.com/game.html",
+     cover: "https://example.com/thumb.png",
+     author: "JOE",
+     authorLink: "https://example.com",
+     special: ["action"],
+     featured: false
+   },
 
   // ── End of custom games ────────────────────────
 ];
@@ -694,7 +681,6 @@ function mergeCustomGames(fetchedZones) {
     authorLink: g.authorLink || '',
     special:    g.special    || [],
     featured:   g.featured   || false,
-    _custom:    true
   }));
   return [...custom, ...fetchedZones];
 }
@@ -778,22 +764,48 @@ const menuEls=['hud','footer','statusBar','stage'];
 function hideMenu(){menuEls.forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});canvas.style.display='none';}
 function showMenu(){menuEls.forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='';});canvas.style.display='';}
 
+function loadIntoViewer(html, file){
+  if(zoneFrame&&zoneFrame.parentNode)zoneFrame.parentNode.removeChild(zoneFrame);
+  zoneFrame=document.createElement('iframe');
+  zoneFrame.id='zoneFrame';zoneFrame.style.cssText='flex:1;border:none;width:100%;';
+  const blob=new Blob([html],{type:'text/html'});
+  const blobURL=URL.createObjectURL(blob);
+  zoneFrame.src=blobURL;
+  zoneFrame.onload=()=>URL.revokeObjectURL(blobURL);
+  zoneViewer.appendChild(zoneFrame);
+  document.getElementById('zoneName').textContent=file.name;
+  document.getElementById('zoneId').textContent=file.id;
+  const authorEl=document.getElementById('zoneAuthor');
+  authorEl.textContent='by '+(file.author||'Unknown');
+  authorEl.href=file.authorLink||'#';
+  hideMenu();zoneViewer.style.display='flex';
+  try{const u=new URL(location);u.searchParams.set('id',file.id);history.pushState(null,'',u);}catch(e){}
+}
+
 function openZone(file){
-  if(file.url.startsWith('http')){window.open(file.url,'_blank');return;}
-  const url=file.url.replace('{COVER_URL}',coverURL).replace('{HTML_URL}',htmlURL);
-  fetch(url+'?t='+Date.now()).then(r=>r.text()).then(html=>{
-    if(zoneFrame&&zoneFrame.parentNode)zoneFrame.parentNode.removeChild(zoneFrame);
-    zoneFrame=document.createElement('iframe');
-    zoneFrame.id='zoneFrame';zoneFrame.style.cssText='flex:1;border:none;width:100%;';
-    zoneViewer.appendChild(zoneFrame);
-    zoneFrame.contentDocument.open();zoneFrame.contentDocument.write(html);zoneFrame.contentDocument.close();
-    document.getElementById('zoneName').textContent=file.name;
-    document.getElementById('zoneId').textContent=file.id;
-    document.getElementById('zoneAuthor').textContent='by '+file.author;
-    if(file.authorLink)document.getElementById('zoneAuthor').href=file.authorLink;
-    hideMenu();zoneViewer.style.display='flex';
-    try{const u=new URL(location);u.searchParams.set('id',file.id);history.pushState(null,'',u);}catch(e){}
-  }).catch(e=>alert('Failed to load: '+e));
+  // Resolve the URL — custom games use direct URLs, gn-math games use template strings
+  const url = file.url.startsWith('http')
+    ? file.url  // already a full URL (custom game or external)
+    : file.url.replace('{COVER_URL}',coverURL).replace('{HTML_URL}',htmlURL);
+
+  fetch(url+'?nocache='+Date.now())
+    .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.text(); })
+    .then(html=>loadIntoViewer(html, file))
+    .catch(()=>{
+      // CORS block or network error — open in iframe by src directly
+      if(zoneFrame&&zoneFrame.parentNode)zoneFrame.parentNode.removeChild(zoneFrame);
+      zoneFrame=document.createElement('iframe');
+      zoneFrame.id='zoneFrame';zoneFrame.style.cssText='flex:1;border:none;width:100%;';
+      zoneFrame.src=url;
+      zoneViewer.appendChild(zoneFrame);
+      document.getElementById('zoneName').textContent=file.name;
+      document.getElementById('zoneId').textContent=file.id;
+      const authorEl=document.getElementById('zoneAuthor');
+      authorEl.textContent='by '+(file.author||'Unknown');
+      authorEl.href=file.authorLink||'#';
+      hideMenu();zoneViewer.style.display='flex';
+      try{const u=new URL(location);u.searchParams.set('id',file.id);history.pushState(null,'',u);}catch(e){}
+    });
 }
 function closeZone(){
   if(zoneFrame&&zoneFrame.parentNode)zoneFrame.parentNode.removeChild(zoneFrame);
@@ -802,15 +814,23 @@ function closeZone(){
 }
 function fullscreenZone(){if(!zoneFrame)return;(zoneFrame.requestFullscreen||zoneFrame.webkitRequestFullscreen).call(zoneFrame);}
 function aboutBlank(){
-  if(!zoneFrame)return;const nw=window.open('about:blank','_blank');
+  if(!zoneFrame)return;
   const zid=document.getElementById('zoneId').textContent;
   const zone=zones.find(z=>z.id+''===zid);if(!zone)return;
-  fetch(zone.url.replace('{HTML_URL}',htmlURL)+'?t='+Date.now()).then(r=>r.text()).then(h=>{nw.document.open();nw.document.write(h);nw.document.close();});
+  fetch(resolveZoneUrl(zone)+'?t='+Date.now()).then(r=>r.text()).then(h=>{
+    const blob=new Blob([h],{type:'text/html'});
+    window.open(URL.createObjectURL(blob),'_blank');
+  }).catch(()=>window.open(resolveZoneUrl(zone),'_blank'));
+}
+
+function resolveZoneUrl(zone){
+  return zone.url.startsWith('http') ? zone.url
+    : zone.url.replace('{HTML_URL}',htmlURL).replace('{COVER_URL}',coverURL);
 }
 function downloadZone(){
   const zid=document.getElementById('zoneId').textContent;
   const zone=zones.find(z=>z.id+''===zid);if(!zone)return;
-  fetch(zone.url.replace('{HTML_URL}',htmlURL)+'?t='+Date.now()).then(r=>r.text()).then(t=>{
+  fetch(resolveZoneUrl(zone)+'?t='+Date.now()).then(r=>r.text()).then(t=>{
     const a=document.createElement('a');
     a.href=URL.createObjectURL(new Blob([t],{type:'text/html'}));
     a.download=zone.name+'.html';document.body.appendChild(a);a.click();document.body.removeChild(a);
@@ -871,7 +891,7 @@ async function showZoneInfo(){
   const fmt=new Intl.DateTimeFormat('en-US',{month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',hour12:true});
   document.getElementById('popupTitle').textContent=zone.name.toUpperCase();
   document.getElementById('popupBody').innerHTML=`<table style="width:100%;border-collapse:collapse">${
-    [['ID',id],['Name',zone.name],zone.author?['Author',zone.author]:null,
+    [['ID', id < 0 ? 'Custom' : id],['Name',zone.name],zone.author?['Author',zone.author]:null,
      zone.authorLink?['Link',`<a href="${zone.authorLink}" target="_blank">${zone.authorLink}</a>`]:null,
      zone.special?['Tags',zone.special.join(', ')]:null,
      ['Added By',commits.at(-1).commit.author.name],
