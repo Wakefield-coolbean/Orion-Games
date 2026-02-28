@@ -59,9 +59,6 @@
     #stage{position:fixed;inset:0;z-index:10;overflow:hidden;cursor:grab;}
     #stage.dragging{cursor:grabbing;}
 
-    /* The world: a single div we translate */
-    #world{position:absolute;top:0;left:0;will-change:transform;}
-
     /* ── CARDS ── absolute in world space */
     .gcard{
       position:absolute;width:160px;
@@ -231,7 +228,6 @@
 
 <!-- The 2D pan viewport -->
 <div id="stage">
-  <div id="world"></div>
 </div>
 
 <div id="statusBar">
@@ -351,160 +347,181 @@ resize();
 window.addEventListener('resize',()=>{resize();layoutWorld();},{passive:true});
 
 /* ═══════════════════════════════════════════════════
-   PAN ENGINE
+   PAN ENGINE — horizontal LOOPING (Pac-Man wrap)
    
-   World coords: cards placed at fixed (wx, wy) positions.
-   Camera offset (camX, camY) translates the world div.
-   Only cards whose world rect intersects the viewport are in the DOM.
+   Horizontally infinite: camX wraps modulo rowWidth.
+   Vertically bounded: camY clamps 0..maxCamY.
+   
+   Each card is positioned directly on #stage (fixed layer),
+   using screen-space coords computed every frame from
+   world coords + camera + modulo wrap.
 ═══════════════════════════════════════════════════ */
-const stageEl  = document.getElementById('stage');
-const worldEl  = document.getElementById('world');
-const countEl  = document.getElementById('zoneCount');
-const hintEl   = document.getElementById('scrollHint');
+const stageEl = document.getElementById('stage');
+const countEl = document.getElementById('zoneCount');
+const hintEl  = document.getElementById('scrollHint');
 
-const CARD_W   = 170;  // card width  px (world space)
-const CARD_H   = 220;  // card height px (world space)
-const GAP_X    = 28;   // horizontal gap
-const GAP_Y    = 32;   // vertical gap
-const COLS     = 6;    // cards per row — feel free to change
-const PAD_TOP  = 90;   // world top padding (below HUD)
-const PAD_LEFT = 40;   // world left padding
+const CARD_W  = 170;
+const CARD_H  = 220;
+const GAP_X   = 32;
+const GAP_Y   = 36;
+const COLS    = 6;
+const PAD_TOP = 100;  // below HUD
 
-const STEP_X   = CARD_W + GAP_X;
-const STEP_Y   = CARD_H + GAP_Y;
+const STEP_X  = CARD_W + GAP_X;
+const STEP_Y  = CARD_H + GAP_Y;
 
-// Camera position (how far we've panned)
+// rowWidth = total width of one full row (used for horizontal wrap)
+function rowWidth() { return COLS * STEP_X; }
+
+// Total world height
+function worldHeight() {
+  return Math.ceil(filteredZones.length / COLS) * STEP_Y + PAD_TOP + 60;
+}
+
+// Camera — camX is unbounded (wraps), camY is clamped
 let camX = 0, camY = 0;
-// Velocity for inertia
 let velX = 0, velY = 0;
 let isDragging = false, lastMX = 0, lastMY = 0;
-let dragMoved = false; // distinguish click vs drag
+let dragMoved = false;
 
 let filteredZones = [];
 let zones = [], popularityData = {};
 
-// Virtual DOM pool: index -> card element (only exists if recently visible)
-const cardPool   = new Map();
-const cardActive = new Set();
+// Card pool — one DOM element per zone index (reused, never destroyed on scroll)
+const cardPool = new Map();
 
 const coverURL = 'https://cdn.jsdelivr.net/gh/%67%6e%2d%6d%61%74%68/covers@main';
 const htmlURL  = 'https://cdn.jsdelivr.net/gh/%67%6e%2d%6d%61%74%68/html@main';
 
-function worldWidth()  { return COLS * STEP_X - GAP_X + PAD_LEFT * 2; }
-function worldHeight() {
-  const rows = Math.ceil(filteredZones.length / COLS);
-  return rows * STEP_Y - GAP_Y + PAD_TOP + 60;
-}
-// Card top-left in world space
-function cardPos(idx){
-  const col = idx % COLS;
-  const row = Math.floor(idx / COLS);
-  return { wx: PAD_LEFT + col * STEP_X, wy: PAD_TOP + row * STEP_Y };
-}
-
 function clamp(v,lo,hi){return v<lo?lo:v>hi?hi:v;}
+function mod(v,n){return((v%n)+n)%n;} // always-positive modulo
 
-// Clamp camera so world doesn't scroll past edges
-function clampCam(){
-  const maxX = Math.max(0, worldWidth()  - W);
+function clampCamY(){
   const maxY = Math.max(0, worldHeight() - H);
-  camX = clamp(camX, 0, maxX);
   camY = clamp(camY, 0, maxY);
 }
 
-function getCard(idx){
-  if(cardPool.has(idx)) return cardPool.get(idx);
-  const zone = filteredZones[idx];
-  if(!zone) return null;
-
+/* ─────────────────────────────────────────────────
+   CARD POOL
+   Each zone gets up to 2 DOM elements: 
+     pool key idx       = the "primary" card
+     pool key idx+TOTAL = the "ghost" (wrap copy)
+   Both display the same zone. Only one is needed 
+   at any moment but during the wrap seam both can 
+   be visible simultaneously.
+───────────────────────────────────────────────── */
+function makeCardEl(zone){
   const card = document.createElement('div');
   card.className = 'gcard';
-
+  card.style.position = 'absolute';
   const inner = document.createElement('div');
   inner.className = 'gcard-inner';
-
   const img = document.createElement('img');
   img.alt = zone.name;
-  // Image loads on demand when card becomes visible
+  // lazy-load: store in dataset until first visible
   img.dataset.src = zone.cover.replace('{COVER_URL}',coverURL).replace('{HTML_URL}',htmlURL);
   inner.appendChild(img);
-
   const lbl = document.createElement('div');
   lbl.className = 'gcard-label';
   lbl.textContent = zone.name;
   inner.appendChild(lbl);
-
   if(zone.featured){
     const b=document.createElement('div');b.className='feat-badge';b.textContent='FEATURED';
     inner.appendChild(b);
   }
-
   card.appendChild(inner);
   card.addEventListener('click',()=>{ if(!dragMoved) openZone(zone); });
-
-  cardPool.set(idx, card);
+  stageEl.appendChild(card);
   return card;
 }
 
-function layoutWorld(){
-  // Remove all cards, rebuild visible set
-  // (called on sort/filter/resize)
-  cardPool.forEach(el=>el.remove());
-  cardPool.clear();
-  cardActive.clear();
-  camX = 0; camY = 0; velX = 0; velY = 0;
-  countEl.textContent = filteredZones.length + ' ZONES';
-  renderWorld();
+function getCard(pk){
+  if(cardPool.has(pk)) return cardPool.get(pk);
+  const total = filteredZones.length;
+  const idx = pk >= total ? pk - total : pk;
+  const zone = filteredZones[idx];
+  if(!zone) return null;
+  const el = makeCardEl(zone);
+  cardPool.set(pk, el);
+  return el;
 }
 
-// OVERSCAN: render cards slightly outside viewport so panning is seamless
-const OVERSCAN = 1.5; // screens worth of extra cards around viewport
+function layoutWorld(){
+  cardPool.forEach(el=>el.remove());
+  cardPool.clear();
+  camX = 0; camY = 0; velX = 0; velY = 0;
+  countEl.textContent = filteredZones.length + ' ZONES';
+}
+
+function placeCard(pk, sx, sy){
+  const card = getCard(pk);
+  if(!card) return;
+  card.style.left = (sx|0) + 'px';
+  card.style.top  = (sy|0) + 'px';
+  card.style.display = '';
+  // Load image on first show
+  const img = card.querySelector('img[data-src]');
+  if(img){ img.src = img.dataset.src; delete img.dataset.src; }
+}
 
 function renderWorld(){
-  // Viewport rect in world space
-  const vx0 = camX - CARD_W * OVERSCAN;
-  const vy0 = camY - CARD_H * OVERSCAN;
-  const vx1 = camX + W + CARD_W * OVERSCAN;
-  const vy1 = camY + H + CARD_H * OVERSCAN;
-
-  const newActive = new Set();
   const total = filteredZones.length;
+  if(!total) return;
 
-  for(let idx=0;idx<total;idx++){
-    const {wx,wy} = cardPos(idx);
-    // Cull cards fully outside overscan rect
-    if(wx+CARD_W < vx0 || wx > vx1 || wy+CARD_H < vy0 || wy > vy1) continue;
+  const rw = rowWidth();
+  // Normalised camera X in [0, rw)
+  const cx = mod(camX, rw);
+  const cy = camY;
 
-    newActive.add(idx);
-    let card = getCard(idx);
-    if(!card) continue;
+  const rows = Math.ceil(total / COLS);
 
-    // Position in world space
-    card.style.left = wx + 'px';
-    card.style.top  = wy + 'px';
+  // Visible row range
+  const rowMin = Math.max(0, Math.floor((cy - STEP_Y - PAD_TOP) / STEP_Y));
+  const rowMax = Math.min(rows-1, Math.floor((cy + H + STEP_Y - PAD_TOP) / STEP_Y));
 
-    if(!card.parentNode){
-      worldEl.appendChild(card);
-      // Load image now that card is visible
-      const img = card.querySelector('img[data-src]');
-      if(img){ img.src = img.dataset.src; delete img.dataset.src; }
+  // Track which pool keys were placed this frame
+  const placed = new Set();
+
+  for(let row = rowMin; row <= rowMax; row++){
+    const sy = PAD_TOP + row * STEP_Y - cy;
+
+    for(let col = 0; col < COLS; col++){
+      const idx = row * COLS + col;
+      if(idx >= total) continue;
+
+      // World X of this column within one period
+      const wx = col * STEP_X;
+
+      // Primary screen X after wrap
+      let sx = wx - cx;
+      // Normalise into (-rw, rw) range so we always get the nearest copy
+      sx = mod(sx, rw);
+      // sx is now in [0, rw). If it's past the right edge, it's the left-side ghost.
+      // We always render the primary at sx, and if it straddles the right edge (sx + CARD_W > W),
+      // we also render its ghost at sx - rw (which will appear on the left side).
+
+      // Primary card
+      if(sx < W + STEP_X){
+        placeCard(idx, sx, sy);
+        placed.add(idx);
+      }
+
+      // Ghost card — wraps around the right->left seam
+      const gsx = sx - rw;
+      if(gsx + CARD_W > -STEP_X && gsx < W + STEP_X){
+        placeCard(idx + total, gsx, sy);
+        placed.add(idx + total);
+      }
     }
   }
 
-  // Hide cards that scrolled out of overscan
-  cardActive.forEach(idx=>{
-    if(!newActive.has(idx)){
-      const el = cardPool.get(idx);
-      if(el && el.parentNode) el.parentNode.removeChild(el);
-    }
+  // Hide any cards not placed this frame
+  cardPool.forEach((el, pk) => {
+    if(!placed.has(pk)) el.style.display = 'none';
   });
-  cardActive.clear();
-  newActive.forEach(i=>cardActive.add(i));
-
-  // Apply camera transform — single style write
-  worldEl.style.transform = `translate(${-camX|0}px,${-camY|0}px)`;
 }
 
+/* ── INPUT ── */
 /* ── INPUT ── */
 function hideHint(){hintEl.classList.add('gone');}
 
@@ -520,11 +537,12 @@ window.addEventListener('mousemove',e=>{
   if(!isDragging)return;
   const dx=e.clientX-lastMX, dy=e.clientY-lastMY;
   if(Math.abs(dx)>3||Math.abs(dy)>3) dragMoved=true;
-  camX-=dx; camY-=dy;
-  clampCam();
+  camX -= dx;   // horizontal: unbounded, wraps
+  camY -= dy;
+  clampCamY();
   velX=-dx; velY=-dy;
-  svx=dx*1.8; svy=dy*1.8; // stars shoot in pan direction
-  lastMX=e.clientX;lastMY=e.clientY;
+  svx=dx*1.8; svy=dy*1.8;
+  lastMX=e.clientX; lastMY=e.clientY;
 },{passive:true});
 
 window.addEventListener('mouseup',()=>{
@@ -532,7 +550,6 @@ window.addEventListener('mouseup',()=>{
   stageEl.classList.remove('dragging');
 },{passive:true});
 
-// Touch
 stageEl.addEventListener('touchstart',e=>{
   isDragging=true;dragMoved=false;velX=0;velY=0;
   lastMX=e.touches[0].clientX;lastMY=e.touches[0].clientY;
@@ -542,19 +559,19 @@ stageEl.addEventListener('touchmove',e=>{
   if(!isDragging)return;
   const dx=e.touches[0].clientX-lastMX, dy=e.touches[0].clientY-lastMY;
   if(Math.abs(dx)>3||Math.abs(dy)>3) dragMoved=true;
-  camX-=dx;camY-=dy;
-  clampCam();
+  camX-=dx; camY-=dy;
+  clampCamY();
   velX=-dx;velY=-dy;
   svx=dx*1.8;svy=dy*1.8;
   lastMX=e.touches[0].clientX;lastMY=e.touches[0].clientY;
 },{passive:true});
 stageEl.addEventListener('touchend',()=>{isDragging=false;},{passive:true});
 
-// Wheel — natural scroll
 stageEl.addEventListener('wheel',e=>{
   e.preventDefault();
-  camX+=e.deltaX;camY+=e.deltaY;
-  clampCam();
+  camX+=e.deltaX;
+  camY+=e.deltaY;
+  clampCamY();
   velX=e.deltaX;velY=e.deltaY;
   svx=-e.deltaX*1.5;svy=-e.deltaY*1.5;
   hideHint();
@@ -595,16 +612,14 @@ function mainLoop(){
 
   // Inertia
   if(!isDragging){
-    camX+=velX;camY+=velY;
-    velX*=.88;velY*=.88;
-    // Soft bounce at edges
-    const maxX=Math.max(0,worldWidth()-W);
+    camX+=velX; camY+=velY;
+    velX*=.88; velY*=.88;
+    // X wraps freely — no clamp needed
+    // Y soft bounce at top/bottom only
     const maxY=Math.max(0,worldHeight()-H);
-    if(camX<0){camX*=.7;velX*=.5;}
     if(camY<0){camY*=.7;velY*=.5;}
-    if(camX>maxX){camX=maxX+(camX-maxX)*.7;velX*=.5;}
     if(camY>maxY){camY=maxY+(camY-maxY)*.7;velY*=.5;}
-    clampCam();
+    clampCamY();
   }
 
   renderWorld();
