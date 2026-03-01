@@ -261,6 +261,11 @@ function fmt(t){var s=esc(t);s=s.replace(/@(\w+)/g,'<span class="men">@$1</span>
 function $(id){return document.getElementById(id)}
 
 /* ═══════ EMOJI DATA ═══════ */
+// Global lobby code — seeded from today's date so all users share the same lobby each day
+var _gd=new Date(),_gs=_gd.getFullYear()*10000+(_gd.getMonth()+1)*100+_gd.getDate();
+function _gh(s){s=((s>>16)^s)*0x45d9f3b;s=((s>>16)^s)*0x45d9f3b;s=(s>>16)^s;return Math.abs(s)}
+var GLOBAL_CODE=_gh(_gs).toString(36).substr(0,6);
+
 var EMOJIS={
 'Smileys':['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','🥲','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🫢','🤫','🤔','🫡','🤐','🤨','😐','😑','😶','🫠','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🥵','🥶','🥴','😵','🤯','🤠','🥳','🥸','😎','🤓','🧐','😕','🫤','😟','🙁','😮','😯','😲','😳','🥺','🥹','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','👾','🤖'],
 'Gestures':['👋','🤚','🖐️','✋','🖖','🫱','🫲','🫳','🫴','👌','🤌','🤏','✌️','🤞','🫰','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','🫵','👍','👎','✊','👊','🤛','🤜','👏','🙌','🫶','👐','🤲','🤝','🙏','💪','🦾','🦿','🦵','🦶','👂','🦻','👃','🧠','🫀','🫁','🦷','🦴','👀','👁️','👅','👄'],
@@ -292,7 +297,12 @@ function doJoin(){
   $('loginModal').style.display='none';$('app').style.display='flex';
   $('myN').textContent=n;$('myAv').style.background=S.ac;$('myAvL').textContent=ini(n);
   document.title='Discord | '+c;
-  addServer(c,c);
+  // Auto-join the global lobby first
+  addServer(GLOBAL_CODE,'Global Lobby');
+  // Then join the user's chosen server (unless same as global)
+  if(c!==GLOBAL_CODE) addServer(c,c);
+  // Switch to the user's server
+  switchSrv(S.servers.length);
   initPN();
 }
 
