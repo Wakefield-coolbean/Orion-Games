@@ -429,7 +429,7 @@ var EMOJIS={
 /* ═══════ STATE ═══════ */
 var pn=null,hbTimer=null,vcPeer=null,vcLocalStream=null,vcRemoteAudios={};
 var MOD_CODE='sc00ters';
-var CLIENT_VERSION=2; // bump this to force all older clients to refresh
+var CLIENT_VERSION=3; // bump this to force all older clients to refresh
 
 function checkVersion(v){
   if(typeof v==='number'&&v>CLIENT_VERSION){
@@ -611,7 +611,7 @@ function initPN(){
         hbTimer=setInterval(function(){
           var myVpid=vcPeer&&vcPeer.id?vcPeer.id:null;
           S.servers.forEach(function(s){
-            pub(scp(s.code,'sys'),{t:'hb',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:s.vc,vpid:myVpid,mod:S.mod,v:CLIENT_VERSION});
+            pub(scp(s.code,'sys'),{t:'hb',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,pic:S.customPic||null,vc:s.vc,vpid:myVpid,mod:S.mod,v:CLIENT_VERSION});
           });
         },8000);
         setInterval(reapMembers,12000);
@@ -655,24 +655,24 @@ function onMsg(e){
       // Anyone joining via the mod server is a mod on all servers
       var isMod=!!d.mod||srv.code===MOD_CODE;
       if(!srv.mem[d.uid])addSysTo(srv,srv===CS()?CS().ch:'general',d.u+' joined');
-      srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,vc:d.vc||null,vpid:d.vpid||null,mod:isMod,last:Date.now()};
+      srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,pic:d.pic||null,vc:d.vc||null,vpid:d.vpid||null,mod:isMod,last:Date.now()};
       // Propagate mod flag to same uid across all servers
       if(isMod) elevateModAcrossServers(d.uid,d.u,d.ac,d.nc);
-      pub(sysC,{t:'here',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:srv.vc,vpid:myVpid,mod:S.mod,v:CLIENT_VERSION,for:d.uid});
+      pub(sysC,{t:'here',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,pic:S.customPic||null,vc:srv.vc,vpid:myVpid,mod:S.mod,v:CLIENT_VERSION,for:d.uid});
       if(srv===CS()){render();updMem();updVC()}
     }
     else if(d.t==='here'&&d.for===S.uid){
       checkVersion(d.v);
       var isMod=!!d.mod||srv.code===MOD_CODE;
-      srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,vc:d.vc||null,vpid:d.vpid||null,mod:isMod,last:Date.now()};
+      srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,pic:d.pic||null,vc:d.vc||null,vpid:d.vpid||null,mod:isMod,last:Date.now()};
       if(isMod) elevateModAcrossServers(d.uid,d.u,d.ac,d.nc);
       if(srv===CS()){updMem();updVC()}
     }
-    else if(d.t==='rollcall'){pub(sysC,{t:'here',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:srv.vc,vpid:myVpid,mod:S.mod,v:CLIENT_VERSION,for:d.uid})}
+    else if(d.t==='rollcall'){pub(sysC,{t:'here',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,pic:S.customPic||null,vc:srv.vc,vpid:myVpid,mod:S.mod,v:CLIENT_VERSION,for:d.uid})}
     else if(d.t==='hb'){
       checkVersion(d.v);
       var isMod=!!d.mod||srv.code===MOD_CODE;
-      srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,vc:d.vc||null,vpid:d.vpid||null,mod:isMod,last:Date.now()};
+      srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,pic:d.pic||null,vc:d.vc||null,vpid:d.vpid||null,mod:isMod,last:Date.now()};
       if(isMod) elevateModAcrossServers(d.uid,d.u,d.ac,d.nc);
       if(srv===CS()){updMem();updVC()}
     }
@@ -754,7 +754,7 @@ function onMsg(e){
   if(d.uid===S.uid)return;
   if(d.t==='msg'&&srv.ms[cn]){
     if(!srv.ms[cn].some(function(m){return m.ts===d.ts&&m.uid===d.uid})){
-      srv.ms[cn].push({t:'u',a:d.u,ac:d.ac,nc:d.nc,x:d.x,img:d.img||null,shout:!!d.shout,ts:d.ts,uid:d.uid,mod:!!d.mod});
+      srv.ms[cn].push({t:'u',a:d.u,ac:d.ac,nc:d.nc,pic:d.pic||null,x:d.x,img:d.img||null,shout:!!d.shout,ts:d.ts,uid:d.uid,mod:!!d.mod});
       if(srv===CS()&&cn===CS().ch)render();
     }
   }
@@ -812,15 +812,15 @@ function sendMsg(){
   var ts=Date.now();
   if(hasImg){
     S.pendingImgs.forEach(function(imgData){
-      var m={t:'u',a:S.u,ac:S.ac,nc:S.nc,x:x||'',img:imgData,shout:false,ts:ts,uid:S.uid,mod:S.mod};
+      var m={t:'u',a:S.u,ac:S.ac,nc:S.nc,pic:S.customPic||null,x:x||'',img:imgData,shout:false,ts:ts,uid:S.uid,mod:S.mod};
       CS().ms[CS().ch].push(m);
-      sendImgChunked(sc(CS().ch),{u:S.u,ac:S.ac,nc:S.nc,x:x||'',ts:ts,uid:S.uid,mod:S.mod},imgData);
+      sendImgChunked(sc(CS().ch),{u:S.u,ac:S.ac,nc:S.nc,pic:S.customPic||null,x:x||'',ts:ts,uid:S.uid,mod:S.mod},imgData);
       ts++;x='';
     });
     clearImgPreview();
   } else {
-    CS().ms[CS().ch].push({t:'u',a:S.u,ac:S.ac,nc:S.nc,x:x,img:null,shout:isShout,ts:ts,uid:S.uid,mod:S.mod});
-    pub(sc(CS().ch),{t:'msg',u:S.u,ac:S.ac,nc:S.nc,x:x,shout:isShout,ts:ts,uid:S.uid,mod:S.mod});
+    CS().ms[CS().ch].push({t:'u',a:S.u,ac:S.ac,nc:S.nc,pic:S.customPic||null,x:x,img:null,shout:isShout,ts:ts,uid:S.uid,mod:S.mod});
+    pub(sc(CS().ch),{t:'msg',u:S.u,ac:S.ac,nc:S.nc,pic:S.customPic||null,x:x,shout:isShout,ts:ts,uid:S.uid,mod:S.mod});
   }
   render();
   i.value='';i.style.height='auto';
@@ -886,8 +886,15 @@ function render(){
     // Store index as data attr for reliable deletion
     var delBtn=S.mod?'<div class="mg-actions"><div class="mg-act" title="Delete message" onclick="delMsg('+i+')">🗑</div></div>':'';
     var shoutCls=m.shout?' shout-msg':'';
-    if(ng)h+='<div class="mg hdr'+shoutCls+'">'+delBtn+'<div class="mg-av" style="background:'+(m.ac||'var(--br)')+'">'+ini(m.a)+'</div><div class="mg-h"><span class="mg-a" style="color:'+(m.nc||'#fff')+'">'+esc(m.a)+'</span>'+modBadge+(m.shout?'<span style="font-size:11px;color:var(--br);margin-left:4px;font-weight:700">📣 SHOUT</span>':'')+'<span class="mg-ts">'+ft(m.ts)+'</span></div>'+content+'</div>';
-    else h+='<div class="mg'+shoutCls+'">'+delBtn+content+'</div>';
+    if(ng){
+      var avStyle=m.pic
+        ?'background-image:url('+m.pic+');background-size:cover;background-position:center;background-color:'+(m.ac||'var(--br)')
+        :'background:'+(m.ac||'var(--br)');
+      var avContent=m.pic?'':ini(m.a);
+      h+='<div class="mg hdr'+shoutCls+'">'+delBtn+'<div class="mg-av" style="'+avStyle+'">'+avContent+'</div><div class="mg-h"><span class="mg-a" style="color:'+(m.nc||'#fff')+'">'+esc(m.a)+'</span>'+modBadge+(m.shout?'<span style="font-size:11px;color:var(--br);margin-left:4px;font-weight:700">📣 SHOUT</span>':'')+'<span class="mg-ts">'+ft(m.ts)+'</span></div>'+content+'</div>';
+    } else {
+      h+='<div class="mg'+shoutCls+'">'+delBtn+content+'</div>';
+    }
     la=m.a;lt=m.ts;
   }
   c.innerHTML=h;if(ab)w.scrollTop=w.scrollHeight;
@@ -1019,7 +1026,9 @@ function togMem(){S.mv=!S.mv;$('memS').classList.toggle('vis',S.mv)}
 function updMem(){
   if(!CS())return;
   var myModBadge=S.mod?'<span class="mod-badge">MOD</span>':'';
-  var h='<div class="mem-i"><div class="mem-av" style="background:'+S.ac+'">'+ini(S.u)+'<div class="sd"></div></div><div class="mem-n" style="color:'+S.nc+'">'+esc(S.u)+myModBadge+'</div></div>';
+  var myAvStyle=S.customPic?'background-image:url('+S.customPic+');background-size:cover;background-position:center':'background:'+S.ac;
+  var myAvContent=S.customPic?'':''+ini(S.u);
+  var h='<div class="mem-i"><div class="mem-av" style="'+myAvStyle+'">'+myAvContent+'<div class="sd"></div></div><div class="mem-n" style="color:'+S.nc+'">'+esc(S.u)+myModBadge+'</div></div>';
   var n=1,keys=Object.keys(CS().mem);
   for(var i=0;i<keys.length;i++){
     var uid=keys[i],p=CS().mem[uid];n++;
@@ -1028,7 +1037,9 @@ function updMem(){
     if(S.mod&&!p.mod){
       modBtns='<div class="mem-btns"><div class="mem-btn" title="Kick" onclick="modKick(\''+uid+'\')">👢</div><div class="mem-btn" title="Ban" onclick="modBan(\''+uid+'\')">🔨</div></div>';
     }
-    h+='<div class="mem-i"><div class="mem-av" style="background:'+(p.ac||'var(--br)')+'">'+ini(p.u)+'<div class="sd"></div></div><div class="mem-n" style="color:'+(p.nc||'var(--ct)')+'">'+esc(p.u)+pModBadge+'</div>'+modBtns+'</div>';
+    var pAvStyle=p.pic?'background-image:url('+p.pic+');background-size:cover;background-position:center':'background:'+(p.ac||'var(--br)');
+    var pAvContent=p.pic?'':ini(p.u);
+    h+='<div class="mem-i"><div class="mem-av" style="'+pAvStyle+'">'+pAvContent+'<div class="sd"></div></div><div class="mem-n" style="color:'+(p.nc||'var(--ct)')+'">'+esc(p.u)+pModBadge+'</div>'+modBtns+'</div>';
   }
   $('memL').innerHTML=h;$('memC').textContent='ONLINE \u2014 '+n;
 }
