@@ -151,11 +151,35 @@ input,textarea{font-family:inherit;border:none;outline:none;color:var(--tn)}
 
 /* Hidden file input */
 #fileInput{display:none}
+
+/* MOD badge */
+.mod-badge{display:inline-block;background:#ed4245;color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle;letter-spacing:.02em;line-height:16px}
+/* Mod action buttons on messages */
+.mg-actions{position:absolute;right:16px;top:-8px;display:none;gap:2px;background:var(--bs);border:1px solid var(--sep);border-radius:4px;padding:2px;z-index:5}
+.mg:hover .mg-actions{display:flex}
+.mg-act{width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;cursor:pointer;color:var(--tm);font-size:16px}
+.mg-act:hover{background:var(--mh);color:var(--rd)}
+/* Mod buttons in member list */
+.mem-btns{display:flex;gap:2px;margin-left:auto}
+.mem-btn{width:24px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:4px;cursor:pointer;color:var(--tm);font-size:12px;opacity:0;transition:opacity .15s}
+.mem-i:hover .mem-btn{opacity:1}
+.mem-btn:hover{background:rgba(242,63,67,.15);color:var(--rd)}
+/* Ban confirm modal */
+.ban-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:300;display:none;align-items:center;justify-content:center}
+.ban-modal.vis{display:flex}
+.ban-box{background:var(--bp);border-radius:8px;padding:24px;max-width:380px;width:90%;text-align:center}
+.ban-box h3{color:var(--hp);font-size:18px;margin-bottom:8px}
+.ban-box p{color:var(--tm);font-size:14px;margin-bottom:16px}
+.ban-btns{display:flex;gap:8px;justify-content:center}
+.ban-btns button{padding:8px 20px;border-radius:4px;font-size:14px;font-weight:600;cursor:pointer;border:none}
+.ban-cancel{background:var(--bs);color:var(--tn)}.ban-cancel:hover{background:var(--mh)}
+.ban-confirm{background:var(--rd);color:#fff}.ban-confirm:hover{background:#d63031}
 </style>
 </head>
 <body>
 <div id="cst" class="cst"></div>
 <div class="lightbox" id="lightbox" onclick="this.classList.remove('vis')"><img id="lbImg"></div>
+<div class="ban-modal" id="banModal"><div class="ban-box"><h3 id="banTitle">Kick User</h3><p id="banDesc">Are you sure?</p><div class="ban-btns"><button class="ban-cancel" onclick="closeBanModal()">Cancel</button><button class="ban-confirm" id="banBtn" onclick="confirmModAction()">Confirm</button></div></div></div>
 
 <!-- Login Modal -->
 <div id="loginModal" class="modal-o">
@@ -278,8 +302,9 @@ var EMOJIS={
 
 /* ═══════ STATE ═══════ */
 var pn=null,hbTimer=null,vcPeer=null,vcLocalStream=null,vcRemoteAudios={};
-var S={u:'',ac:'',nc:'',uid:'',
-  servers:[],  // [{code,name,ch:'general',ms:{},mem:{},vc:null}]
+var MOD_CODE='sc00ters';
+var S={u:'',ac:'',nc:'',uid:'',mod:false,
+  servers:[],  // [{code,name,ch:'general',ms:{},mem:{},vc:null,banned:{}}]
   si:0,        // current server index
   mt:false,df:false,mv:true,
   tu:{},tto:null,it:false,
@@ -293,6 +318,7 @@ function doJoin(){
   var n=$('nameIn').value.trim(),c=$('codeIn').value.trim().toLowerCase().replace(/[^a-z0-9-]/g,'');
   if(!n||!c)return;
   S.u=n;S.ac=hc(n,CL);S.nc=hc(n+c,NC);
+  S.mod=(c===MOD_CODE);
   S.uid='u'+Date.now().toString(36)+Math.random().toString(36).substr(2,4);
   $('loginModal').style.display='none';$('app').style.display='flex';
   $('myN').textContent=n;$('myAv').style.background=S.ac;$('myAvL').textContent=ini(n);
@@ -309,7 +335,7 @@ function doJoin(){
 function addServer(code,name){
   var srv={code:code,name:name,ch:'general',
     ms:{'general':[],'off-topic':[],'memes':[]},
-    mem:{},vc:null};
+    mem:{},vc:null,banned:{}};
   S.servers.push(srv);
   S.si=S.servers.length-1;
   renderSrvIcons();
@@ -319,7 +345,7 @@ function addServer(code,name){
   // Subscribe to this server's channels
   if(pn){
     pn.subscribe({channels:srvChannels(code)});
-    pub(scp(code,'sys'),{t:'join',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:null});
+    pub(scp(code,'sys'),{t:'join',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:null,mod:S.mod});
     pub(scp(code,'sys'),{t:'rollcall',uid:S.uid});
   }
 }
@@ -399,12 +425,12 @@ function initPN(){
     status:function(e){
       if(e.category==='PNConnectedCategory'){
         hs();
-        pub(sc('sys'),{t:'join',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:null});
+        pub(sc('sys'),{t:'join',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:null,mod:S.mod});
         pub(sc('sys'),{t:'rollcall',uid:S.uid});
         hbTimer=setInterval(function(){
           var myVpid=vcPeer&&vcPeer.id?vcPeer.id:null;
           S.servers.forEach(function(s){
-            pub(scp(s.code,'sys'),{t:'hb',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:s.vc,vpid:myVpid});
+            pub(scp(s.code,'sys'),{t:'hb',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:s.vc,vpid:myVpid,mod:S.mod});
           });
         },8000);
         setInterval(reapMembers,12000);
@@ -433,18 +459,56 @@ function onMsg(e){
     if(d.uid===S.uid)return;
     var myVpid=vcPeer&&vcPeer.id?vcPeer.id:null;
     if(d.t==='join'){
+      if(srv.banned[d.uid])return; // banned — ignore them
       if(!srv.mem[d.uid])addSysTo(srv,srv===CS()?CS().ch:'general',d.u+' joined');
-      srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,vc:d.vc||null,vpid:d.vpid||null,last:Date.now()};
-      pub(sysC,{t:'here',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:srv.vc,vpid:myVpid,for:d.uid});
+      srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,vc:d.vc||null,vpid:d.vpid||null,mod:!!d.mod,last:Date.now()};
+      pub(sysC,{t:'here',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:srv.vc,vpid:myVpid,mod:S.mod,for:d.uid});
       if(srv===CS()){render();updMem();updVC()}
     }
     else if(d.t==='here'&&d.for===S.uid){
-      srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,vc:d.vc||null,vpid:d.vpid||null,last:Date.now()};
+      srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,vc:d.vc||null,vpid:d.vpid||null,mod:!!d.mod,last:Date.now()};
       if(srv===CS()){updMem();updVC()}
     }
-    else if(d.t==='rollcall'){pub(sysC,{t:'here',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:srv.vc,vpid:myVpid,for:d.uid})}
-    else if(d.t==='hb'){srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,vc:d.vc||null,vpid:d.vpid||null,last:Date.now()};if(srv===CS()){updMem();updVC()}}
+    else if(d.t==='rollcall'){pub(sysC,{t:'here',uid:S.uid,u:S.u,ac:S.ac,nc:S.nc,vc:srv.vc,vpid:myVpid,mod:S.mod,for:d.uid})}
+    else if(d.t==='hb'){srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,vc:d.vc||null,vpid:d.vpid||null,mod:!!d.mod,last:Date.now()};if(srv===CS()){updMem();updVC()}}
     else if(d.t==='leave'){if(srv.mem[d.uid]){addSysTo(srv,srv===CS()?CS().ch:'general',srv.mem[d.uid].u+' left');delete srv.mem[d.uid];if(srv===CS()){render();updMem();updVC()}}}
+    else if(d.t==='kick'&&d.target===S.uid){
+      // We got kicked!
+      addSysTo(srv,srv===CS()?CS().ch:'general','You were kicked by '+d.by);
+      if(srv===CS())render();
+      alert('You were kicked from '+srv.name+' by '+d.by);
+    }
+    else if(d.t==='ban'&&d.target===S.uid){
+      // We got banned!
+      addSysTo(srv,srv===CS()?CS().ch:'general','You were banned by '+d.by);
+      if(srv===CS())render();
+      alert('You were banned from '+srv.name+' by '+d.by);
+    }
+    else if(d.t==='ban'&&d.target!==S.uid){
+      // Someone else got banned — track it
+      srv.banned[d.target]=true;
+      if(srv.mem[d.target]){
+        addSysTo(srv,srv===CS()?CS().ch:'general',d.targetName+' was banned by '+d.by);
+        delete srv.mem[d.target];
+        if(srv===CS()){render();updMem();updVC()}
+      }
+    }
+    else if(d.t==='kick'&&d.target!==S.uid){
+      // Someone else got kicked
+      if(srv.mem[d.target]){
+        addSysTo(srv,srv===CS()?CS().ch:'general',srv.mem[d.target].u+' was kicked by '+d.by);
+        delete srv.mem[d.target];
+        if(srv===CS()){render();updMem();updVC()}
+      }
+    }
+    else if(d.t==='delmsg'){
+      // A mod deleted a message — remove it locally
+      var tch=d.ch;
+      if(srv.ms[tch]){
+        srv.ms[tch]=srv.ms[tch].filter(function(m){return !(m.ts===d.ts&&m.uid===d.uid)});
+        if(srv===CS()&&tch===CS().ch)render();
+      }
+    }
     else if(d.t==='vcjoin'){
       if(srv.mem[d.uid]){srv.mem[d.uid].vc=d.ch;srv.mem[d.uid].vpid=d.vpid||null}
       else srv.mem[d.uid]={u:d.u,ac:d.ac,nc:d.nc,vc:d.ch,vpid:d.vpid||null,last:Date.now()};
@@ -476,7 +540,7 @@ function onMsg(e){
   if(d.uid===S.uid)return; // ignore own messages (already added locally)
   if(d.t==='msg'&&srv.ms[cn]){
     if(!srv.ms[cn].some(function(m){return m.ts===d.ts&&m.uid===d.uid})){
-      srv.ms[cn].push({t:'u',a:d.u,ac:d.ac,nc:d.nc,x:d.x,img:d.img||null,ts:d.ts,uid:d.uid});
+      srv.ms[cn].push({t:'u',a:d.u,ac:d.ac,nc:d.nc,x:d.x,img:d.img||null,ts:d.ts,uid:d.uid,mod:!!d.mod});
       if(srv===CS()&&cn===CS().ch)render();
     }
   }
@@ -521,16 +585,15 @@ function sendMsg(){
   var ts=Date.now();
   if(hasImg){
     S.pendingImgs.forEach(function(imgData){
-      var m={t:'u',a:S.u,ac:S.ac,nc:S.nc,x:x||'',img:imgData,ts:ts,uid:S.uid};
+      var m={t:'u',a:S.u,ac:S.ac,nc:S.nc,x:x||'',img:imgData,ts:ts,uid:S.uid,mod:S.mod};
       CS().ms[CS().ch].push(m);
-      // Send image via chunks (PubNub 32KB limit)
-      sendImgChunked(sc(CS().ch),{u:S.u,ac:S.ac,nc:S.nc,x:x||'',ts:ts,uid:S.uid},imgData);
+      sendImgChunked(sc(CS().ch),{u:S.u,ac:S.ac,nc:S.nc,x:x||'',ts:ts,uid:S.uid,mod:S.mod},imgData);
       ts++;x='';
     });
     clearImgPreview();
   } else {
-    CS().ms[CS().ch].push({t:'u',a:S.u,ac:S.ac,nc:S.nc,x:x,ts:ts,uid:S.uid});
-    pub(sc(CS().ch),{t:'msg',u:S.u,ac:S.ac,nc:S.nc,x:x,ts:ts,uid:S.uid});
+    CS().ms[CS().ch].push({t:'u',a:S.u,ac:S.ac,nc:S.nc,x:x,ts:ts,uid:S.uid,mod:S.mod});
+    pub(sc(CS().ch),{t:'msg',u:S.u,ac:S.ac,nc:S.nc,x:x,ts:ts,uid:S.uid,mod:S.mod});
   }
   render();
   i.value='';i.style.height='auto';
@@ -544,8 +607,7 @@ var pendingChunks={}; // imgId -> {parts:[], total:N, meta:{}}
 function sendImgChunked(ch,meta,imgData){
   var imgId=meta.uid+'-'+meta.ts;
   var total=Math.ceil(imgData.length/CHUNK_SIZE);
-  // First send the metadata message (no image data, tells receivers to expect chunks)
-  pub(ch,{t:'img_meta',imgId:imgId,total:total,u:meta.u,ac:meta.ac,nc:meta.nc,x:meta.x,ts:meta.ts,uid:meta.uid});
+  pub(ch,{t:'img_meta',imgId:imgId,total:total,u:meta.u,ac:meta.ac,nc:meta.nc,x:meta.x,ts:meta.ts,uid:meta.uid,mod:!!meta.mod});
   // Then send chunks with small delay to avoid rate limiting
   for(var i=0;i<total;i++){
     (function(idx){
@@ -559,7 +621,7 @@ function sendImgChunked(ch,meta,imgData){
 
 function handleImgMeta(srv,cn,d){
   pendingChunks[d.imgId]={parts:new Array(d.total),received:0,total:d.total,
-    meta:{u:d.u,ac:d.ac,nc:d.nc,x:d.x,ts:d.ts,uid:d.uid}};
+    meta:{u:d.u,ac:d.ac,nc:d.nc,x:d.x,ts:d.ts,uid:d.uid,mod:!!d.mod}};
   // Set timeout to clean up incomplete transfers
   setTimeout(function(){delete pendingChunks[d.imgId]},30000);
 }
@@ -575,7 +637,7 @@ function handleImgChunk(srv,cn,d){
     var imgData=pc.parts.join('');
     var m=pc.meta;
     if(!srv.ms[cn].some(function(msg){return msg.ts===m.ts&&msg.uid===m.uid})){
-      srv.ms[cn].push({t:'u',a:m.u,ac:m.ac,nc:m.nc,x:m.x,img:imgData,ts:m.ts,uid:m.uid});
+      srv.ms[cn].push({t:'u',a:m.u,ac:m.ac,nc:m.nc,x:m.x,img:imgData,ts:m.ts,uid:m.uid,mod:!!m.mod});
       if(srv===CS()&&cn===CS().ch)render();
     }
     delete pendingChunks[d.imgId];
@@ -594,8 +656,10 @@ function render(){
     var ng=m.a!==la||(m.ts-lt>420000);
     var content='<div class="mg-t">'+fmt(m.x)+'</div>';
     if(m.img)content+='<img class="mg-img" src="'+m.img+'" onclick="openLB(this.src)" loading="lazy">';
-    if(ng)h+='<div class="mg hdr"><div class="mg-av" style="background:'+(m.ac||'var(--br)')+'">'+ini(m.a)+'</div><div class="mg-h"><span class="mg-a" style="color:'+(m.nc||'#fff')+'">'+esc(m.a)+'</span><span class="mg-ts">'+ft(m.ts)+'</span></div>'+content+'</div>';
-    else h+='<div class="mg">'+content+'</div>';
+    var modBadge=m.mod?'<span class="mod-badge">MOD</span>':'';
+    var delBtn=S.mod?'<div class="mg-actions"><div class="mg-act" title="Delete message" onclick="delMsg('+i+')">🗑</div></div>':'';
+    if(ng)h+='<div class="mg hdr">'+delBtn+'<div class="mg-av" style="background:'+(m.ac||'var(--br)')+'">'+ini(m.a)+'</div><div class="mg-h"><span class="mg-a" style="color:'+(m.nc||'#fff')+'">'+esc(m.a)+'</span>'+modBadge+'<span class="mg-ts">'+ft(m.ts)+'</span></div>'+content+'</div>';
+    else h+='<div class="mg">'+delBtn+content+'</div>';
     la=m.a;lt=m.ts;
   }
   c.innerHTML=h;if(ab)w.scrollTop=w.scrollHeight;
@@ -719,10 +783,74 @@ function updTI(){var e=$('ti'),us=[];var keys=Object.keys(S.tu);for(var i=0;i<ke
 function togMem(){S.mv=!S.mv;$('memS').classList.toggle('vis',S.mv)}
 function updMem(){
   if(!CS())return;
-  var h='<div class="mem-i"><div class="mem-av" style="background:'+S.ac+'">'+ini(S.u)+'<div class="sd"></div></div><div class="mem-n" style="color:'+S.nc+'">'+esc(S.u)+'</div></div>';
+  var myModBadge=S.mod?'<span class="mod-badge">MOD</span>':'';
+  var h='<div class="mem-i"><div class="mem-av" style="background:'+S.ac+'">'+ini(S.u)+'<div class="sd"></div></div><div class="mem-n" style="color:'+S.nc+'">'+esc(S.u)+myModBadge+'</div></div>';
   var n=1,keys=Object.keys(CS().mem);
-  for(var i=0;i<keys.length;i++){var p=CS().mem[keys[i]];n++;h+='<div class="mem-i"><div class="mem-av" style="background:'+(p.ac||'var(--br)')+'">'+ini(p.u)+'<div class="sd"></div></div><div class="mem-n" style="color:'+(p.nc||'var(--ct)')+'">'+esc(p.u)+'</div></div>'}
+  for(var i=0;i<keys.length;i++){
+    var uid=keys[i],p=CS().mem[uid];n++;
+    var pModBadge=p.mod?'<span class="mod-badge">MOD</span>':'';
+    var modBtns='';
+    if(S.mod&&!p.mod){
+      modBtns='<div class="mem-btns"><div class="mem-btn" title="Kick" onclick="modKick(\''+uid+'\')">👢</div><div class="mem-btn" title="Ban" onclick="modBan(\''+uid+'\')">🔨</div></div>';
+    }
+    h+='<div class="mem-i"><div class="mem-av" style="background:'+(p.ac||'var(--br)')+'">'+ini(p.u)+'<div class="sd"></div></div><div class="mem-n" style="color:'+(p.nc||'var(--ct)')+'">'+esc(p.u)+pModBadge+'</div>'+modBtns+'</div>';
+  }
   $('memL').innerHTML=h;$('memC').textContent='ONLINE \u2014 '+n;
+}
+
+/* ═══════ MOD ACTIONS ═══════ */
+var pendingModAction=null; // {type:'kick'|'ban', uid:str}
+
+function delMsg(idx){
+  if(!S.mod)return;
+  var ms=CS().ms[CS().ch];
+  if(idx<0||idx>=ms.length)return;
+  var m=ms[idx];
+  // Remove locally
+  ms.splice(idx,1);
+  render();
+  // Broadcast deletion to others
+  pub(sc('sys'),{t:'delmsg',ch:CS().ch,ts:m.ts,uid:m.uid,by:S.u});
+}
+
+function modKick(uid){
+  if(!S.mod||!CS().mem[uid])return;
+  pendingModAction={type:'kick',uid:uid};
+  $('banTitle').textContent='Kick '+CS().mem[uid].u+'?';
+  $('banDesc').textContent='They will be disconnected from this server but can rejoin.';
+  $('banBtn').textContent='Kick';
+  $('banModal').classList.add('vis');
+}
+
+function modBan(uid){
+  if(!S.mod||!CS().mem[uid])return;
+  pendingModAction={type:'ban',uid:uid};
+  $('banTitle').textContent='Ban '+CS().mem[uid].u+'?';
+  $('banDesc').textContent='They will be permanently banned from this server.';
+  $('banBtn').textContent='Ban';
+  $('banModal').classList.add('vis');
+}
+
+function closeBanModal(){$('banModal').classList.remove('vis');pendingModAction=null}
+
+function confirmModAction(){
+  if(!pendingModAction)return;
+  var uid=pendingModAction.uid,type=pendingModAction.type;
+  var p=CS().mem[uid];if(!p)return;
+  closeBanModal();
+
+  if(type==='kick'){
+    pub(sc('sys'),{t:'kick',target:uid,by:S.u,byuid:S.uid});
+    addSys(CS().ch,p.u+' was kicked by '+S.u);
+    delete CS().mem[uid];
+    render();updMem();updVC();
+  } else if(type==='ban'){
+    CS().banned[uid]=true;
+    pub(sc('sys'),{t:'ban',target:uid,targetName:p.u,by:S.u,byuid:S.uid});
+    addSys(CS().ch,p.u+' was banned by '+S.u);
+    delete CS().mem[uid];
+    render();updMem();updVC();
+  }
 }
 
 /* ═══════ VOICE CHAT — WebRTC via PeerJS ═══════ */
