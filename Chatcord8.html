@@ -480,18 +480,14 @@ function doJoin(){
   var n=$('nameIn').value.trim();
   if(!n)return;
   var c=GLOBAL_CODE;
-  try{
-    var bans=JSON.parse(localStorage.getItem('dc_bans')||'{}');
-    if(bans[c]){
-      $('banSrv').textContent=c;
-      $('banBy').textContent='a moderator';
-      $('banScreen').classList.add('vis');
-      return;
-    }
-  }catch(e){}
+  // uid-based ban check done below after uid generation
   S.u=n;S.ac=hc(n,CL);S.nc=hc(n+c,NC);
   S.mod=(c===MOD_CODE);
   S.uid='u'+Date.now().toString(36)+Math.random().toString(36).substr(2,4);
+  try{
+    var bans2=JSON.parse(localStorage.getItem('dc_bans')||'{}');
+    if(bans2[S.uid]){$('banSrv').textContent='this server';$('banBy').textContent='a moderator';$('banScreen').classList.add('vis');return;}
+  }catch(e2){}
   $('loginModal').style.display='none';
   $('app').style.display='flex';
   $('myN').textContent=n;$('myAv').style.background=S.ac;$('myAvL').textContent=ini(n);
@@ -711,10 +707,10 @@ function onMsg(e){
       if(vcPeer){try{vcPeer.destroy()}catch(e){}}
     }
     else if(d.t==='ban'&&d.target===S.uid){
-      var banCode=d.scode||srv.code;
       try{
         var bans=JSON.parse(localStorage.getItem('dc_bans')||'{}');
-        bans[banCode]=true;
+        bans[d.target]=true;
+        if(d.tuid)bans[d.tuid]=true;
         localStorage.setItem('dc_bans',JSON.stringify(bans));
       }catch(e){}
       $('banSrv').textContent=srv.name;
@@ -748,6 +744,18 @@ function onMsg(e){
       if(tsrv.ms[tch]){
         tsrv.ms[tch]=tsrv.ms[tch].filter(function(m){return !(m.ts===d.ts&&m.uid===d.muid)});
         if(tsrv===CS()&&tch===CS().ch)render();
+      }
+    }
+    else if(d.t==='mute'){
+      if(srv.mem[d.target]){
+        srv.mem[d.target].muted=!!d.muted;
+        addSysTo(srv,srv===CS()?CS().ch:'general',srv.mem[d.target].u+(d.muted?' was muted by ':' was unmuted by ')+d.by);
+        if(srv===CS()){render();updMem();}
+      }
+      // If YOU are being muted
+      if(d.target===S.uid){
+        S.forceMuted=!!d.muted;
+        addSys(CS().ch,'You were '+(d.muted?'muted':'unmuted')+' by '+d.by);
       }
     }
     else if(d.t==='vcjoin'){
@@ -846,6 +854,7 @@ function parseCmd(x){
 function sendMsg(){
   var i=$('chatIn'),raw=i.value,x=raw.trim(),hasImg=S.pendingImgs.length>0;
   if(!x&&!hasImg)return;if(!pn)return;
+  if(S.forceMuted){addSys(CS().ch,'You are muted and cannot send messages.');render();i.value='';return;}
 
   var parsed=parseCmd(x);
   var fx=parsed.fx;
@@ -1144,7 +1153,9 @@ function updMem(){
     var pModBadge=p.mod?'<span class="mod-badge">MOD</span>':'';
     var modBtns='';
     if(S.mod&&!p.mod){
-      modBtns='<div class="mem-btns"><div class="mem-btn" title="Kick" onclick="modKick(\''+uid+'\')">👢</div><div class="mem-btn" title="Ban" onclick="modBan(\''+uid+'\')">🔨</div></div>';
+      var muteIcon=p.muted?'🔇':'🔕';
+      var muteTitle=p.muted?'Unmute':'Mute';
+      modBtns='<div class="mem-btns"><div class="mem-btn" title="'+muteTitle+'" onclick="modMute(\''+uid+'\')">'+muteIcon+'</div><div class="mem-btn" title="Kick" onclick="modKick(\''+uid+'\')">👢</div><div class="mem-btn" title="Ban" onclick="modBan(\''+uid+'\')">🔨</div></div>';
     }
     var pAvStyle=p.pic?'background-image:url('+p.pic+');background-size:cover;background-position:center':'background:'+(p.ac||'var(--br)');
     var pAvContent=p.pic?'':ini(p.u);
@@ -1170,10 +1181,21 @@ function delMsg(idx){
   pub(sc('sys'),{t:'delmsg',ch:CS().ch,ts:m.ts,muid:m.uid,scode:CS().code,by:S.uid});
 }
 
+function modMute(uid){
+  if(!S.mod||!CS().mem[uid])return;
+  var p=CS().mem[uid];
+  p.muted=!p.muted;
+  var action=p.muted?'muted':'unmuted';
+  pub(sc('sys'),{t:'mute',target:uid,muted:p.muted,by:S.u,byuid:S.uid});
+  addSys(CS().ch,p.u+' was '+action+' by '+S.u);
+  render();updMem();
+}
+
 function modKick(uid){
   if(!S.mod||!CS().mem[uid])return;
   pendingModAction={type:'kick',uid:uid};
-  $('banTitle').textContent='Kick '+CS().mem[uid].u+'?';
+  var dname=CS().mem[uid].u;var dshort=dname.length>20?dname.substr(0,20)+'…':dname;
+  $('banTitle').textContent='Kick '+dshort+'?';
   $('banDesc').textContent='They will be disconnected but can rejoin.';
   $('banBtn').textContent='Kick';
   $('kickMsgWrap').style.display='block';
@@ -1185,7 +1207,8 @@ function modKick(uid){
 function modBan(uid){
   if(!S.mod||!CS().mem[uid])return;
   pendingModAction={type:'ban',uid:uid};
-  $('banTitle').textContent='Ban '+CS().mem[uid].u+'?';
+  var dname=CS().mem[uid].u;var dshort=dname.length>20?dname.substr(0,20)+'…':dname;
+  $('banTitle').textContent='Ban '+dshort+'?';
   $('banDesc').textContent='They will be permanently banned from this server.';
   $('banBtn').textContent='Ban';
   $('kickMsgWrap').style.display='none';
@@ -1208,7 +1231,7 @@ function confirmModAction(){
     render();updMem();updVC();
   } else if(type==='ban'){
     CS().banned[uid]=true;
-    pub(sc('sys'),{t:'ban',target:uid,targetName:p.u,by:S.u,byuid:S.uid,scode:CS().code});
+    pub(sc('sys'),{t:'ban',target:uid,tuid:p.uid||uid,targetName:p.u,by:S.u,byuid:S.uid,scode:CS().code});
     addSys(CS().ch,p.u+' was banned by '+S.u);
     delete CS().mem[uid];
     render();updMem();updVC();
