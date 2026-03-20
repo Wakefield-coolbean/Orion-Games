@@ -361,6 +361,7 @@
       .gcard{width:130px;}
     }
   </style>
+  <script src="https://cdn.pubnub.com/sdk/javascript/pubnub.7.2.2.min.js"></script>
 </head>
 <body>
 
@@ -1712,46 +1713,61 @@ function clearDisguiseImg(){
    No external APIs needed
 ═══════════════════════════════════════════════════ */
 (function initLivePlayers(){
-  const PREFIX = 'orion_peer_';
-  const HB     = 2000;  // write heartbeat every 2s
-  const TOUT   = 6000;  // tab considered gone after 6s
-  const myKey  = PREFIX + Math.random().toString(36).slice(2);
+  const el = document.getElementById('liveNum');
+  const CCU_CHANNEL = 'orion-ccu-v2'; // bump version to flush old ghost tabs
 
-  function stamp(){ try{ localStorage.setItem(myKey, Date.now()); }catch(e){} }
+  try{
+    const userId = 'orion-' + Math.random().toString(36).slice(2);
+    const pn = new PubNub({
+      publishKey:        'demo',
+      subscribeKey:      'demo',
+      userId:            userId,
+      heartbeatInterval: 10,
+      presenceTimeout:   20
+    });
 
-  function countLive(){
-    const now = Date.now();
-    let n = 0;
-    try{
-      for(let i = 0; i < localStorage.length; i++){
-        const k = localStorage.key(i);
-        if(!k || !k.startsWith(PREFIX)) continue;
-        const t = parseInt(localStorage.getItem(k), 10);
-        if(!isNaN(t) && now - t < TOUT) n++;
+    pn.addListener({
+      presence: function(e){
+        if(e.channel !== CCU_CHANNEL) return;
+        if(e.occupancy != null){
+          if(el) el.textContent = e.occupancy;
+        }
       }
-    }catch(e){}
-    return Math.max(1, n);
+    });
+
+    pn.subscribe({ channels: [CCU_CHANNEL], withPresence: true });
+
+    pn.hereNow({ channels: [CCU_CHANNEL] }).then(function(r){
+      const occ = r.totalOccupancy;
+      if(el && occ != null) el.textContent = occ;
+    }).catch(function(){});
+
+    window.addEventListener('pagehide', function(){
+      const leaveURL = 'https://ps.pndsn.com/v2/presence/sub-key/demo/channel/' + CCU_CHANNEL + '/leave?uuid=' + encodeURIComponent(userId);
+      try{ navigator.sendBeacon(leaveURL); } catch(e){}
+      try{ pn.unsubscribeAll(); } catch(e){}
+    });
+
+  } catch(e){
+    // PubNub unavailable — fall back to localStorage count
+    const PREFIX = 'orion_peer_';
+    const HB = 2000, TOUT = 6000;
+    const myKey = PREFIX + Math.random().toString(36).slice(2);
+    function stamp(){ try{ localStorage.setItem(myKey, Date.now()); }catch(e){} }
+    function countLive(){
+      const now = Date.now(); let n = 0;
+      try{ for(let i=0;i<localStorage.length;i++){
+        const k=localStorage.key(i); if(!k||!k.startsWith(PREFIX)) continue;
+        const t=parseInt(localStorage.getItem(k),10);
+        if(!isNaN(t)&&now-t<TOUT) n++;
+      }}catch(e){}
+      return Math.max(1,n);
+    }
+    stamp(); if(el) el.textContent = countLive();
+    const hbInt = setInterval(()=>{ stamp(); if(el) el.textContent = countLive(); }, HB);
+    window.addEventListener('storage', e=>{ if(e.key&&e.key.startsWith(PREFIX)&&el) el.textContent=countLive(); });
+    window.addEventListener('beforeunload',()=>{ try{localStorage.removeItem(myKey);}catch(e){} clearInterval(hbInt); });
   }
-
-  function updateDisplay(){
-    const el = document.getElementById('liveNum');
-    if(el) el.textContent = countLive();
-  }
-
-  // Write own heartbeat + recount every 2s — no events needed
-  stamp();
-  updateDisplay();
-  const hbInt = setInterval(()=>{ stamp(); updateDisplay(); }, HB);
-
-  // storage event as fast-path when other tabs change (bonus, not relied on)
-  window.addEventListener('storage', e=>{
-    if(e.key && e.key.startsWith(PREFIX)) updateDisplay();
-  });
-
-  window.addEventListener('beforeunload', ()=>{
-    try{ localStorage.removeItem(myKey); }catch(e){}
-    clearInterval(hbInt);
-  });
 })();
 
 </script>
