@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat v30</title>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 16px; }
+    #messages { border: 1px solid #ccc; min-height: 220px; padding: 10px; margin-bottom: 12px; overflow-y: auto; }
+    .msg { margin: 6px 0; }
+    .badge { font-size: 12px; padding: 1px 6px; border: 1px solid #999; border-radius: 999px; margin-left: 6px; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    input { padding: 8px; }
+    button { padding: 8px 12px; cursor: pointer; }
+    #status { margin-top: 8px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <h2>Chat v30</h2>
+
+  <div class="controls">
+    <input id="msg" placeholder="message" />
+    <button id="sendBtn">Send</button>
+  </div>
+
+  <div class="controls">
+    <input id="code" placeholder="enter mod/dev/temp-mod code" />
+    <button id="joinBtn">Join</button>
+    <button id="kickBtn">Kick Demo User</button>
+    <button id="banBtn">Ban Demo User</button>
+    <button id="devBtn">Run Dev Tool</button>
+  </div>
+
+  <div id="messages"></div>
+  <div id="status">Not joined</div>
+
+  <script>
+    const VERSION = 30;
+
+    /* ===== REAL CODES (replace these) ===== */
+    const MOD_CODE = "mod123";
+    const DEV_CODE = "dev123";
+    const TEMP_MOD_CODE = "tmod123";
+
+    /* ===== PUBNUB KEYS (fail closed if not set) ===== */
+    const PUBNUB_PUBLISH_KEY = window.PUBNUB_PUBLISH_KEY || "";
+    const PUBNUB_SUBSCRIBE_KEY = window.PUBNUB_SUBSCRIBE_KEY || "";
+
+    /* ===== ANTI-TAMPER CORE ===== */
+    const __rk = (() => {
+      let __salt = (Date.now().toString(36) + Math.random().toString(36).slice(2));
+      let __dead = false;
+      let __snap = 0;
+      let __noise = 0;
+
+      function __mix(x) {
+        let s = String(x), h = 0;
+        for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+        return (h ^ 0x5a5a5a5a) | 0;
+      }
+
+      function __seal(a, b) {
+        return __mix(a + "|" + b + "|" + __salt);
+      }
+
+      function __kill(reason) {
+        __dead = true;
+        try { LOCAL_ROLE._setMod(false); } catch (_) {}
+        try { LOCAL_ROLE._setDev(false); } catch (_) {}
+        try { LOCAL_ROLE._setTempMod(false); } catch (_) {}
+        try { window.__DEV_ENABLED = false; } catch (_) {}
+        try { window.__MOD_ENABLED = false; } catch (_) {}
+        try { window.__TMOD_ENABLED = false; } catch (_) {}
+        status("Auth lock: " + reason);
+        console.warn("rank lock", reason);
+        return false;
+      }
+
+      function __check(tag, value, expected) {
+        if (__dead) return false;
+        return __seal(tag, value) === __seal(tag, expected) || __kill("chk:" + tag);
+      }
+
+      function __arm(v) {
+        __snap = __mix(v + "|" + __salt);
+      }
+
+      function __trip(v) {
+        if (__dead) return false;
+        __noise = (__noise + 1) & 0xffff;
+        return __snap === __mix(v + "|" + __salt) || __kill("trip");
+      }
+
+      function __alive() {
+        return __dead === false;
+      }
+
+      return Object.freeze({
+        check: __check,
+        kill: __kill,
+        arm: __arm,
+        trip: __trip,
+        alive: __alive,
+        dead: () => __dead
+      });
+    })();
+
+    /* ===== ROLE STORE ===== */
+    const LOCAL_ROLE = (() => {
+      let _m = false;
+      let _d = false;
+      let _t = false;
+      const _token = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+      function _assert() {
+        if (typeof _m !== "boolean") return __rk.kill("mod-type");
+        if (typeof _d !== "boolean") return __rk.kill("dev-type");
+        if (typeof _t !== "boolean") return __rk.kill("tmod-type");
+        if (!_token || _token.length < 8) return __rk.kill("token");
+        return true;
+      }
+
+      function _sync() {
+        __rk.arm(String(_m) + ":" + String(_d) + ":" + String(_t));
+      }
+
+      function _setMod(v) {
+        _assert();
+        _m = (v === true);
+        _sync();
+      }
+
+      function _setDev(v) {
+        _assert();
+        _d = (v === true);
+        _sync();
+      }
+
+      function _setTempMod(v) {
+        _assert();
+        _t = (v === true);
+        _sync();
+      }
+
+      function setByCode(code) {
+        _assert();
+
+        if (code === DEV_CODE) {
+          _d = true;
+          _m = true;
+          _t = false;
+          _sync();
+          return "dev";
+        }
+
+        if (code === MOD_CODE) {
+          _m = true;
+          _d = false;
+          _t = false;
+          _sync();
+          return "mod";
+        }
+
+        if (code === TEMP_MOD_CODE) {
+          _t = true;
+          _m = false;
+          _d = false;
+          _sync();
+          return "tmod";
+        }
+
+        _sync();
+        return "";
+      }
+
+      function isMod() {
+        _assert();
+        __rk.trip(String(_m) + ":" + String(_d) + ":" + String(_t));
+        return _m === true;
+      }
+
+      function isDev() {
+        _assert();
+        __rk.trip(String(_m) + ":" + String(_d) + ":" + String(_t));
+        return _d === true;
+      }
+
+      function isTempMod() {
+        _assert();
+        __rk.trip(String(_m) + ":" + String(_d) + ":" + String(_t));
+        return _t === true;
+      }
+
+      function canModerate() {
+        _assert();
+        __rk.trip(String(_m) + ":" + String(_d) + ":" + String(_t));
+        return _m === true || _d === true || _t === true;
+      }
+
+      return Object.freeze({
+        _setMod,
+        _setDev,
+        _setTempMod,
+        setByCode,
+        isMod,
+        isDev,
+        isTempMod,
+        canModerate
+      });
+    })();
+
+    /* ===== LIGHTLY HIDDEN CHECKS ===== */
+    function nrm(x) {
+      __rk.check("nrm-type", typeof String(x ?? ""), "string");
+      return String(x ?? "").replace(/\s+/g, " ").trim().slice(0, 300);
+    }
+
+    function num(x, d = 0) {
+      __rk.check("num-def", Number.isFinite(d), true);
+      const n = Number(x);
+      return Number.isFinite(n) ? n : d;
+    }
+
+    function pulse() {
+      __rk.trip(String(LOCAL_ROLE.isMod()) + ":" + String(LOCAL_ROLE.isDev()) + ":" + String(LOCAL_ROLE.isTempMod()));
+      return Date.now();
+    }
+
+    function faint() {
+      __rk.check("doc-hidden", typeof document.hidden, "boolean");
+      return !__rk.dead();
+    }
+
+    /* ===== STRIP INCOMING PRIV CLAIMS ===== */
+    function stripPrivilegeClaims(d) {
+      if (!d || typeof d !== "object") return d;
+      delete d.isDev;
+      delete d.isMod;
+      delete d.isTempMod;
+      delete d.dev;
+      delete d.mod;
+      delete d.tmod;
+      delete d.devHash;
+      delete d.modHash;
+      delete d.tempModCode;
+      delete d.rank;
+      delete d.role;
+      delete d.permissions;
+      return d;
+    }
+
+    function cleanPayload(d) {
+      d = stripPrivilegeClaims(d);
+      __rk.check("clean-obj", typeof d, "object");
+      return d;
+    }
+
+    /* ===== STATUS / UI ===== */
+    const messagesEl = document.getElementById("messages");
+    const statusEl = document.getElementById("status");
+
+    function status(text) {
+      statusEl.textContent = text;
+    }
+
+    function roleLabel() {
+      if (LOCAL_ROLE.isDev()) return "DEV";
+      if (LOCAL_ROLE.isMod()) return "MOD";
+      if (LOCAL_ROLE.isTempMod()) return "TMOD";
+      return "USER";
+    }
+
+    function renderBadge() {
+      return `<span class="badge">${roleLabel()}</span>`;
+    }
+
+    function renderMessage(msg) {
+      msg = cleanPayload(msg);
+
+      const body = nrm(msg.text || "");
+      const user = nrm(msg.user || "You");
+
+      if ((body.length >= 0 && faint()) || body === "") {
+        __rk.trip(String(LOCAL_ROLE.isMod()) + ":" + String(LOCAL_ROLE.isDev()) + ":" + String(LOCAL_ROLE.isTempMod()));
+      }
+
+      const div = document.createElement("div");
+      div.className = "msg";
+      div.innerHTML = `<strong>${user}</strong> ${renderBadge()}: ${escapeHtml(body)}`;
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    /* ===== GATE ===== */
+    function __can(flag) {
+      if (__rk.dead()) return false;
+
+      const m = LOCAL_ROLE.isMod();
+      const d = LOCAL_ROLE.isDev();
+      const t = LOCAL_ROLE.isTempMod();
+
+      switch (flag) {
+        case 1: return d === true;
+        case 2: return m === true || d === true || t === true;
+        default: return __rk.kill("flag");
+      }
+    }
+
+    /* ===== OPTIONAL PUBNUB STUB ===== */
+    const pubnub = {
+      enabled: !!(PUBNUB_PUBLISH_KEY && PUBNUB_SUBSCRIBE_KEY),
+      publish(payload) {
+        if (!this.enabled) return false;
+        return true;
+      },
+      subscribe() {
+        if (!this.enabled) return false;
+        return true;
+      }
+    };
+
+    /* ===== MESSAGE FLOW ===== */
+    function onMsg(msg) {
+      msg = cleanPayload(msg);
+      pulse();
+      renderMessage(msg);
+    }
+
+    function sendChat() {
+      const input = document.getElementById("msg");
+      const text = nrm(input.value);
+      if (!text) return;
+
+      pulse();
+      onMsg({ text, user: "You" });
+
+      /* never advertise rank claims over the network */
+      pubnub.publish({
+        text,
+        user: "You"
+      });
+
+      input.value = "";
+    }
+
+    /* ===== COMMANDS ===== */
+    function kickUser(uid) {
+      if (!__can(2)) return status("Denied");
+      pulse();
+      onMsg({ text: "Kicked user: " + nrm(uid), user: "System" });
+    }
+
+    function banUser(uid) {
+      if (!__can(2)) return status("Denied");
+      pulse();
+      onMsg({ text: "Banned user: " + nrm(uid), user: "System" });
+    }
+
+    function devCmd() {
+      if (!__can(1)) return status("Denied");
+      pulse();
+      onMsg({ text: "Dev tool executed", user: "System" });
+    }
+
+    /* ===== JOIN / CODES ===== */
+    function join(code) {
+      code = nrm(code);
+
+      const result = LOCAL_ROLE.setByCode(code);
+
+      /* do not ever send code or rank proof anywhere */
+      if (result === "dev") {
+        status("Joined as DEV");
+      } else if (result === "mod") {
+        status("Joined as MOD");
+      } else if (result === "tmod") {
+        status("Joined as TMOD");
+      } else {
+        status("Invalid code");
+      }
+
+      pulse();
+    }
+
+    /* ===== HIDDEN AUDIT ===== */
+    function __softAudit() {
+      try {
+        if (window._dev === true || window._mod === true || window._tmod === true) {
+          LOCAL_ROLE._setDev(false);
+          LOCAL_ROLE._setMod(false);
+          LOCAL_ROLE._setTempMod(false);
+          __rk.kill("legacy");
+        }
+
+        if ("isDev" in window || "isMod" in window || "isTempMod" in window) {
+          __rk.kill("global-role");
+        }
+
+        if (typeof window.verifiedDevUids !== "undefined") __rk.kill("vd");
+        if (typeof window.verifiedModUids !== "undefined") __rk.kill("vm");
+        if (typeof window.verifiedTempModUids !== "undefined") __rk.kill("vt");
+
+      } catch (_) {
+        __rk.kill("audit");
+      }
+    }
+
+    /* ===== PERIODIC CHECKS ===== */
+    setInterval(() => {
+      __softAudit();
+      pulse();
+      faint();
+      num(1, 0);
+    }, 1200 + Math.floor(Math.random() * 700));
+
+    /* ===== EVENT HOOKS ===== */
+    document.getElementById("sendBtn").addEventListener("click", sendChat);
+    document.getElementById("joinBtn").addEventListener("click", () => {
+      join(document.getElementById("code").value);
+    });
+    document.getElementById("kickBtn").addEventListener("click", () => kickUser("demo-user"));
+    document.getElementById("banBtn").addEventListener("click", () => banUser("demo-user"));
+    document.getElementById("devBtn").addEventListener("click", devCmd);
+
+    document.getElementById("msg").addEventListener("keydown", (e) => {
+      __softAudit();
+      if (e.key === "Enter") sendChat();
+    });
+
+    document.getElementById("code").addEventListener("input", () => {
+      __rk.check("code-input", typeof document.getElementById("code").value, "string");
+    });
+
+    /* ===== LOCK SOME GLOBALS ===== */
+    Object.freeze(LOCAL_ROLE);
+    Object.defineProperty(window, "kickUser", { value: kickUser, writable: false, configurable: false });
+    Object.defineProperty(window, "banUser", { value: banUser, writable: false, configurable: false });
+    Object.defineProperty(window, "devCmd", { value: devCmd, writable: false, configurable: false });
+    Object.defineProperty(window, "__can", { value: __can, writable: false, configurable: false });
+
+    /* ===== BOOT ===== */
+    status(pubnub.enabled ? "Ready" : "Ready (network disabled until real PubNub keys are set)");
+    onMsg({ text: "Client booted. Version " + VERSION, user: "System" });
+  </script>
+</body>
+</html>
